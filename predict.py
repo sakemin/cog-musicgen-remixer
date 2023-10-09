@@ -261,6 +261,7 @@ class Predictor(BasePredictor):
                 wav = torch.concat([wav,wavs[i+1][...,:sub_duration*wav_sr]],dim=-1).cpu()
         # print(wav.shape, vocals.shape)
         wav = wav / np.abs(wav).max()
+        vocals = vocals / np.abs(vocals).max()
         audio_write(
             "background",
             wav[0].cpu(),
@@ -269,7 +270,7 @@ class Predictor(BasePredictor):
             loudness_compressor=True,
         )
         # beats = self.estimate_beats(wav, model.sample_rate)
-        wav = wav.cpu() + vocals[...,:wav.shape[-1]].cpu()*0.3
+        wav = wav.cpu() + vocals[...,:wav.shape[-1]].cpu()*0.6
         
         audio_write(
             "out",
