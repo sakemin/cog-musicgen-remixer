@@ -751,7 +751,7 @@ class ChromaChordConditioner(ChromaStemConditioner):
 
         self.__dict__['demucs'] = pretrained.get_model('htdemucs').to(device)
         stem_sources: list = self.demucs.sources 
-        self.stem_indices = torch.LongTensor([stem_sources.index('vocals'), stem_sources.index('bass'), stem_sources.index('other')]).to(device)        
+        self.stem_indices = torch.LongTensor([stem_sources.index('bass'), stem_sources.index('other')]).to(device)        
         self.chroma_len = self._get_chroma_len()
         self.bar2chromabin = self.sample_rate / self.winhop
 

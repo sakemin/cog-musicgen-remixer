@@ -232,7 +232,8 @@ class Predictor(BasePredictor):
             )
             if self.device == 'cuda':
                 torch.cuda.empty_cache()
-        if int(duration - overlap) % sub_duration != 0:
+        if int(duration - overlap) % sub_duration != 0 and duration > 30:
+            # print(overlap + ((duration - overlap) % sub_duration))
             set_generation_params(overlap + ((duration - overlap) % sub_duration)) ## 여기
             wav, tokens = model.generate_continuation_with_audio_tokens(
                 prompt=tokens[...,sub_duration*encodec_rate:],
@@ -253,22 +254,25 @@ class Predictor(BasePredictor):
             )
             if self.device == 'cuda':
                 torch.cuda.empty_cache()
-        wav = wavs[0][...,:sub_duration*wav_sr].cpu()
-        for i in range(len(wavs)-1):
-            if i == len(wavs)-2:
-                wav = torch.concat([wav,wavs[i+1]],dim=-1).cpu()
-            else:
-                wav = torch.concat([wav,wavs[i+1][...,:sub_duration*wav_sr]],dim=-1).cpu()
+        if duration > 30:
+            wav = wavs[0][...,:sub_duration*wav_sr].cpu()
+            for i in range(len(wavs)-1):
+                if i == len(wavs)-2:
+                    wav = torch.concat([wav,wavs[i+1]],dim=-1).cpu()
+                else:
+                    wav = torch.concat([wav,wavs[i+1][...,:sub_duration*wav_sr]],dim=-1).cpu()
+        else:
+            wav = wavs[0][...,:vocals.shape[-1]].cpu()
         # print(wav.shape, vocals.shape)
         wav = wav / np.abs(wav).max()
         vocals = vocals / np.abs(vocals).max()
-        audio_write(
-            "background",
-            wav[0].cpu(),
-            model.sample_rate,
-            strategy=normalization_strategy,
-            loudness_compressor=True,
-        )
+        # audio_write(
+        #     "background",
+        #     wav[0].cpu(),
+        #     model.sample_rate,
+        #     strategy=normalization_strategy,
+        #     loudness_compressor=True,
+        # )
         # beats = self.estimate_beats(wav, model.sample_rate)
         wav = wav.cpu() + vocals[...,:wav.shape[-1]].cpu()*0.6
         
@@ -283,6 +287,8 @@ class Predictor(BasePredictor):
 
         if output_format == "mp3":
             mp3_path = "out.mp3"
+            if Path(mp3_path).exists():
+                os.remove(mp3_path)
             subprocess.call(["ffmpeg", "-i", wav_path, mp3_path])
             os.remove(wav_path)
             path = mp3_path
