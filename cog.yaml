@@ -9,7 +9,7 @@ build:
   # a list of ubuntu apt packages to install
   system_packages:
     - "ffmpeg"
-    - "portaudio19-dev"
+    # - "portaudio19-dev"
     # - "libgl1-mesa-glx"
     # - "libglib2.0-0"
 
@@ -26,7 +26,6 @@ build:
     - "hydra_colorlog"
     - "julius"
     - "num2words"
-    - "numpy"
     - "sentencepiece"
     - "spacy==3.5.2"
     - "torchaudio>=2.0.0"
@@ -43,23 +42,13 @@ build:
     - "tensorboard>=1.15"
     - "pyaudio==0.2.13"
     - "git+https://github.com/CPJKU/madmom"
-    - "BeatNet==1.1.0"
-    - "contourpy==1.0.7"
-    - "cycler==0.11.0"
-    - "fonttools==4.38.0"
-    - "kiwisolver==1.4.4"
-    - "matplotlib==3.6.3"
-    # - "numpy==1.24.2"
-    - "packaging==23.0"
-    - "Pillow==9.4.0"
-    - "pyparsing==3.0.9"
-    - "python-dateutil==2.8.2"
-    - "PyWavelets==1.4.1"
-    - "scipy==1.10.0"
-    - "six==1.16.0"
+    - "ninja"
+    - "allin1"
+    - "pytsmod"
       
   # commands run after the environment is setup
-  # run:
+  run:
+    - "pip3 install natten -f https://shi-labs.com/natten/wheels/cu117/torch2.0.0/index.html"
     # - "apt-get update && apt-get install -y ffmpeg"
     # - "apt-get install unzip"
     # - "python -m pip install pip --upgrade"

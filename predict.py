@@ -19,8 +19,6 @@ import numpy as np
 
 import torch
 
-from audiocraft.solvers.compression import CompressionSolver
-
 from audiocraft.models import MusicGen, MultiBandDiffusion
 from audiocraft.solvers.compression import CompressionSolver
 from audiocraft.models.loaders import (
@@ -32,10 +30,13 @@ from audiocraft.data.audio import audio_write
 from audiocraft.models.builders import get_lm_model
 from omegaconf import OmegaConf
 
-from BeatNet.BeatNet import BeatNet
 import librosa
 
 import subprocess
+import math
+
+import allin1
+import pytsmod as tsm
 
 def _delete_param(cfg, full_name: str):
     parts = full_name.split('.')
@@ -75,18 +76,22 @@ class Predictor(BasePredictor):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
         self.model = load_ckpt('musicgen_chord.th', self.device)
+        # self.model = load_ckpt('checkpoint_74.th', self.device)
         self.model.lm.condition_provider.conditioners['self_wav'].match_len_on_eval = True
         self.mbd = MultiBandDiffusion.get_mbd_musicgen()
 
-        self.beatnet = BeatNet(
-            1,
-            mode="offline",
-            inference_model="DBN",
-            plot=[],
-            thread=False,
-            device="cuda:0",
-        )
-
+        # Switching Chord Prediction model to 25 vocab (smaller)
+        from audiocraft.modules.btc.btc_model import BTC_model
+        from audiocraft.modules.btc.utils.mir_eval_modules import idx2chord
+        self.model.lm.condition_provider.conditioners['self_wav'].chroma.config.feature['large_voca']=False
+        self.model.lm.condition_provider.conditioners['self_wav'].chroma.config.model['num_chords']=25
+        self.model.lm.condition_provider.conditioners['self_wav'].chroma.model_file='audiocraft/modules/btc/test/btc_model.pt'
+        self.model.lm.condition_provider.conditioners['self_wav'].chroma.idx_to_chord = idx2chord
+        loaded = torch.load('audiocraft/modules/btc/test/btc_model.pt')
+        self.model.lm.condition_provider.conditioners['self_wav'].chroma.mean = loaded['mean']
+        self.model.lm.condition_provider.conditioners['self_wav'].chroma.std = loaded['std']
+        self.model.lm.condition_provider.conditioners['self_wav'].chroma.model = BTC_model(config=self.model.lm.condition_provider.conditioners['self_wav'].chroma.config.model).to(self.device)
+        self.model.lm.condition_provider.conditioners['self_wav'].chroma.model.load_state_dict(loaded['model'])
 
     def _load_model(
         self,
@@ -122,7 +127,7 @@ class Predictor(BasePredictor):
         ),
         normalization_strategy: str = Input(
             description="Strategy for normalizing audio.",
-            default="loudness",
+            default="peak",
             choices=["loudness", "clip", "peak", "rms"],
         ),
         top_k: int = Input(
@@ -149,6 +154,18 @@ class Predictor(BasePredictor):
             description="Seed for random number generator. If `None` or `-1`, a random seed will be used.",
             default=None,
         ),
+        overlap: int = Input(
+            description="The length of overlapping part. Last `overlap` seconds of previous generation output audio is given to the next generation's audio prompt for continuation. (This will be fixed with the optimal value and be hidden, when releasing.)",
+            default=5, le=15, ge=1
+        ),
+        in_step_beat_sync: bool = Input(
+            description="If `True`, beat syncing is performed every generation step. In this case, audio prompting with EnCodec token will not be used, so that the audio quality might be degraded on and on along encoding-decoding sequences of the generation steps. (This will be fixed with the optimal value and be hidden, when releasing.)",
+            default=False,
+        ),
+        beat_sync_threshold: float = Input(
+            description="When beat syncing, if the gap between generated downbeat timing and input audio downbeat timing is larger than `beat_sync_threshold`, consider the beats are not corresponding. (This will be fixed with the optimal value and be hidden, when releasing.)",
+            default=1.0,
+        ),
     ) -> Path:
 
         if prompt is None:
@@ -157,9 +174,24 @@ class Predictor(BasePredictor):
             raise ValueError("Must provide `music_input`.")
         
         if prompt is None:
-             prompt = ''
-         
+            prompt = ''
+        
+        tmp_path = 'tmp'
+        if os.path.isdir(tmp_path):
+            import shutil
+            shutil.rmtree(tmp_path)
+        os.mkdir(tmp_path)
+
+        if os.path.isdir('demix'):
+            import shutil
+            shutil.rmtree('demix')
+        if os.path.isdir('spec'):
+            import shutil
+            shutil.rmtree('spec')
+
         model = self.model
+
+        in_step_beat_sync = in_step_beat_sync
 
         set_generation_params = lambda duration: model.set_generation_params(
             duration=duration,
@@ -175,83 +207,214 @@ class Predictor(BasePredictor):
         set_all_seeds(seed)
         print(f"Using seed {seed}")
 
-        y, sr = librosa.load(music_input)
-
-        from bpm_detector import bpm_detector
-        tempo, _ = bpm_detector(y, sr)
-        tempo = tempo[0]
-        # tempo = librosa.beat.beat_track(y=music_input, sr=sr) #not that accurate
-        print(f"BPM : {int(tempo)}")
-        
-        prompt = prompt + f', bpm : {int(tempo)}'
-        
-        bpm_detector = None
+        # Music Structure Analysis
+        music_input_analysis = allin1.analyze(music_input)
 
         music_input, sr = torchaudio.load(music_input)
+
+        print("BPM : ", music_input_analysis.bpm)
+        
+        prompt = prompt + f', bpm : {int(music_input_analysis.bpm)}'
+        
         music_input = music_input[None] if music_input.dim() == 2 else music_input
         duration = music_input.shape[-1]/sr
 
-        vocals = self.separate_vocals(music_input, sr)
+        vocal, background = self.separate_vocals(music_input, sr)
+
+        audio_write(
+                "input_vocal",
+                vocal[0].cpu(),
+                model.sample_rate,
+                strategy=normalization_strategy,
+        )
+        
+        beat_sync_threshold = beat_sync_threshold
+        amp_rate = 1.15
 
         encodec_rate = 50
-        sub_duration=15
-        overlap = 30 - sub_duration
+        overlap = overlap
+        sub_duration = 30 - overlap
         wavs = []
         wav_sr = model.sample_rate
         set_generation_params(30)
 
-        wav, tokens = model.generate_with_chroma(['the intro of ' + prompt], music_input[...,:30*sr], sr, progress=True, return_tokens=True)
+        amp_tensor = torch.linspace(1,amp_rate,model.sample_rate*30).to(self.device)
+
+        total_step = math.ceil((duration-overlap)/sub_duration)
+        print(f"Step 1/{total_step}")
+        wav, tokens = model.generate_with_chroma([prompt], music_input[...,:30*sr], sr, progress=True, return_tokens=True)
         if multi_band_diffusion:
             wav = self.mbd.tokens_to_wav(tokens)
-        wavs.append(wav.detach().cpu())
+        wav = wav * amp_tensor
         audio_write(
-            "wav_0",
+            tmp_path + "/wav_0",
             wav[0].cpu(),
             model.sample_rate,
             strategy=normalization_strategy,
         )
+
+        if in_step_beat_sync:
+            wav_analysis = allin1.analyze(tmp_path + '/wav_0.wav')
+            torchaudio.save(tmp_path + "/input_0.wav", music_input[0][...,:30*sr], sr)
+            input_analysis = allin1.analyze(tmp_path + '/input_0.wav')
+
+            wav_downbeats = []
+            input_downbeats = []
+            for wav_beat in wav_analysis.downbeats:
+                input_beat = min(input_analysis.downbeats, key=lambda x: abs(wav_beat - x))
+                if len(input_downbeats) != 0 and int(input_beat * wav_sr) == input_downbeats[-1]:
+                    continue
+                if abs(wav_beat-input_beat)>beat_sync_threshold:
+                    input_beat = wav_beat
+                wav_downbeats.append(int(wav_beat * wav_sr))
+                input_downbeats.append(int(input_beat * wav_sr))
+            if wav_downbeats[-1]>input_downbeats[-1]: # Need to work on from here
+                input_last = 30*wav_sr
+            else:
+                input_last = 30*wav_sr
+            wav_downbeats = [0] + wav_downbeats + [30*wav_sr]
+            input_downbeats = [0] + input_downbeats + [input_last] # to here
+
+            wav = torch.Tensor(tsm.wsola(wav[0].cpu().numpy(), np.array([wav_downbeats, input_downbeats])))[...,:wav_sr*30].unsqueeze(0).to(torch.float32)
+
+            audio_write(
+                tmp_path + "/wav_0",
+                wav[0].cpu(),
+                model.sample_rate,
+                strategy=normalization_strategy,
+            )
+
+        wavs.append(wav.detach().cpu())
+
         if self.device == 'cuda':
             torch.cuda.empty_cache()
         for i in range(int((duration - overlap) // sub_duration) - 1):
-            wav, tokens = model.generate_continuation_with_audio_tokens(
-            prompt=tokens[...,sub_duration*encodec_rate:],
-            melody_wavs = music_input[...,sub_duration*(i+1)*sr:(sub_duration*(i+1)+30)*sr],
-            melody_sample_rate=sr,
-            descriptions=['chorus of ' + prompt],
-            progress=True,
-            return_tokens=True,
-            )
+            print(f"Step {i+2}/{total_step}")
+            if in_step_beat_sync:
+                wav, tokens = model.generate_continuation_with_audio_tokens_and_audio_chroma(
+                prompt=tokens[...,sub_duration*encodec_rate:],
+                melody_wavs = music_input[...,sub_duration*(i+1)*sr:(sub_duration*(i+1)+30)*sr],
+                melody_sample_rate=sr,
+                # descriptions=['chorus of ' + prompt],
+                descriptions=[prompt],
+                progress=True,
+                return_tokens=True,
+                )
+            else:
+                wav, tokens = model.generate_continuation_with_audio_chroma(
+                prompt=wav[...,sub_duration*wav_sr:],
+                prompt_sample_rate=wav_sr,
+                melody_wavs = music_input[...,sub_duration*(i+1)*sr:(sub_duration*(i+1)+30)*sr],
+                melody_sample_rate=sr,
+                # descriptions=['chorus of ' + prompt],
+                descriptions=[prompt],
+                progress=True,
+                return_tokens=True,
+                )
             if multi_band_diffusion:
                 wav = self.mbd.tokens_to_wav(tokens)
-            wavs.append(wav.detach().cpu())
+            wav = wav * amp_tensor
             audio_write(
-                f"wav_{i+1}",
+                f"{tmp_path}/wav_{i+1}",
                 wav[0].cpu(),
                 model.sample_rate,
                 strategy=normalization_strategy,
             )
+
+            if in_step_beat_sync:
+                wav_analysis = allin1.analyze(f'{tmp_path}/wav_{i+1}.wav')
+                torchaudio.save(f"{tmp_path}/input_{i+1}.wav", music_input[0][...,sub_duration*(i+1)*sr:(sub_duration*(i+1)+30)*sr], sr)
+                input_analysis = allin1.analyze(f'{tmp_path}/input_{i+1}.wav')
+
+                wav_downbeats = []
+                input_downbeats = []
+                for wav_beat in wav_analysis.downbeats:
+                    input_beat = min(input_analysis.downbeats, key=lambda x: abs(wav_beat - x))
+                    if len(input_downbeats) != 0 and int(input_beat * wav_sr) == input_downbeats[-1]:
+                        continue
+                    if abs(wav_beat-input_beat)>beat_sync_threshold:
+                        input_beat = wav_beat
+                    wav_downbeats.append(int(wav_beat * wav_sr))
+                    input_downbeats.append(int(input_beat * wav_sr))
+                wav_downbeats = [0] + wav_downbeats + [30*wav_sr]
+                input_downbeats = [0] + input_downbeats + [30*wav_sr]
+
+                wav = torch.Tensor(tsm.wsola(wav[0].cpu().numpy(), np.array([wav_downbeats, input_downbeats])))[...,:wav_sr*30].unsqueeze(0).to(torch.float32)
+
+                audio_write(
+                    f"{tmp_path}/wav_{i+1}",
+                    wav[0].cpu(),
+                    model.sample_rate,
+                    strategy=normalization_strategy,
+                )
+
+            wavs.append(wav.detach().cpu())
+
             if self.device == 'cuda':
                 torch.cuda.empty_cache()
         if int(duration - overlap) % sub_duration != 0 and duration > 30:
+            print(f"Step {total_step}/{total_step}")
             # print(overlap + ((duration - overlap) % sub_duration))
             set_generation_params(overlap + ((duration - overlap) % sub_duration)) ## 여기
-            wav, tokens = model.generate_continuation_with_audio_tokens(
-                prompt=tokens[...,sub_duration*encodec_rate:],
-                melody_wavs = music_input[...,sub_duration*(len(wavs))*sr:],
-                melody_sample_rate=sr,
-                descriptions=['the outro of ' + prompt],
-                progress=True,
-                return_tokens=True,
-            )
+            if in_step_beat_sync:
+                wav, tokens = model.generate_continuation_with_audio_tokens_and_audio_chroma(
+                    prompt=tokens[...,sub_duration*encodec_rate:],
+                    melody_wavs = music_input[...,sub_duration*(len(wavs))*sr:],
+                    melody_sample_rate=sr,
+                    # descriptions=['the outro of ' + prompt],
+                    descriptions=[prompt],
+                    progress=True,
+                    return_tokens=True,
+                )
+            else:
+                wav, tokens = model.generate_continuation_with_audio_chroma(
+                    prompt=wav[...,sub_duration*wav_sr:],
+                    prompt_sample_rate=wav_sr,
+                    melody_wavs = music_input[...,sub_duration*(len(wavs))*sr:],
+                    melody_sample_rate=sr,
+                    # descriptions=['the outro of ' + prompt],
+                    descriptions=[prompt],
+                    progress=True,
+                    return_tokens=True,
+                )
             if multi_band_diffusion:
                 wav = self.mbd.tokens_to_wav(tokens)
-            wavs.append(wav.detach().cpu())
             audio_write(
-                "wav_last",
+                f"{tmp_path}/wav_last",
                 wav[0].cpu(),
                 model.sample_rate,
                 strategy=normalization_strategy,
             )
+
+            if in_step_beat_sync:
+                wav_analysis = allin1.analyze(f'{tmp_path}/wav_last.wav')
+                torchaudio.save(f"{tmp_path}/input_last.wav", music_input[0][...,sub_duration*(len(wavs))*sr:], sr)
+                input_analysis = allin1.analyze(f'{tmp_path}/input_last.wav')
+
+                wav_downbeats = []
+                input_downbeats = []
+                for wav_beat in wav_analysis.downbeats:
+                    input_beat = min(input_analysis.downbeats, key=lambda x: abs(wav_beat - x))
+                    if len(input_downbeats) != 0 and int(input_beat * wav_sr) == input_downbeats[-1]:
+                        continue
+                    if abs(wav_beat-input_beat)>beat_sync_threshold:
+                        input_beat = wav_beat
+                    wav_downbeats.append(int(wav_beat * wav_sr))
+                    input_downbeats.append(int(input_beat * wav_sr))
+                wav_downbeats = [0] + wav_downbeats + [int(wav.shape[-1])]
+                input_downbeats = [0] + input_downbeats + [int(wav.shape[-1])]
+
+                wav = torch.Tensor(tsm.wsola(wav[0].cpu().numpy(), np.array([wav_downbeats, input_downbeats])))[...,:wav_sr*30].unsqueeze(0).to(torch.float32)
+
+                audio_write(
+                    f"{tmp_path}/wav_last",
+                    wav[0].cpu(),
+                    model.sample_rate,
+                    strategy=normalization_strategy,
+                )
+
+            wavs.append(wav.detach().cpu())
+
             if self.device == 'cuda':
                 torch.cuda.empty_cache()
         if duration > 30:
@@ -262,19 +425,50 @@ class Predictor(BasePredictor):
                 else:
                     wav = torch.concat([wav,wavs[i+1][...,:sub_duration*wav_sr]],dim=-1).cpu()
         else:
-            wav = wavs[0][...,:vocals.shape[-1]].cpu()
-        # print(wav.shape, vocals.shape)
+            wav = wavs[0][...,:vocal.shape[-1]].cpu()
+        # print(wav.shape, vocal.shape)
         wav = wav / np.abs(wav).max()
-        vocals = vocals / np.abs(vocals).max()
-        # audio_write(
-        #     "background",
-        #     wav[0].cpu(),
-        #     model.sample_rate,
-        #     strategy=normalization_strategy,
-        #     loudness_compressor=True,
-        # )
-        # beats = self.estimate_beats(wav, model.sample_rate)
-        wav = wav.cpu() + vocals[...,:wav.shape[-1]].cpu()*0.6
+        vocal = vocal / np.abs(vocal).max()
+        audio_write(
+            "background",
+            wav[0].cpu(),
+            model.sample_rate,
+            strategy=normalization_strategy,
+            loudness_compressor=True,
+        )
+
+        wav_length = wav.shape[-1]
+
+        if not in_step_beat_sync:
+            wav_analysis = allin1.analyze('background.wav')
+
+            wav_downbeats = []
+            input_downbeats = []
+            for wav_beat in wav_analysis.downbeats:
+                input_beat = min(music_input_analysis.downbeats, key=lambda x: abs(wav_beat - x))
+                print(wav_beat, input_beat)
+                if len(input_downbeats) != 0 and int(input_beat * wav_sr) == input_downbeats[-1]:
+                    print('Dropped')
+                    continue
+                if abs(wav_beat-input_beat)>beat_sync_threshold:
+                    input_beat = wav_beat
+                    print('Replaced')
+                wav_downbeats.append(int(wav_beat * wav_sr))
+                input_downbeats.append(int(input_beat * wav_sr))
+            wav_downbeats = [0] + wav_downbeats + [wav_length]
+            input_downbeats = [0] + input_downbeats + [wav_length]
+
+            wav = torch.Tensor(tsm.wsola(wav[0].cpu().numpy(), np.array([wav_downbeats, input_downbeats])))[...,:wav_length].unsqueeze(0).to(torch.float32)
+
+            audio_write(
+                "background_synced",
+                wav[0].cpu(),
+                model.sample_rate,
+                strategy=normalization_strategy,
+                loudness_compressor=True,
+            )
+
+        wav = wav.cpu() + vocal[...,:wav_length].cpu()*0.55
         
         audio_write(
             "out",
@@ -346,9 +540,11 @@ class Predictor(BasePredictor):
 
         wav = convert_audio(music_input, sr, self.model.lm.condition_provider.conditioners['self_wav'].demucs.samplerate, self.model.lm.condition_provider.conditioners['self_wav'].demucs.audio_channels)
         stems = apply_model(self.model.lm.condition_provider.conditioners['self_wav'].demucs, wav, device=self.device)
+        background = stems[:, self.model.lm.condition_provider.conditioners['self_wav'].demucs.sources.index('drums')] + stems[:, self.model.lm.condition_provider.conditioners['self_wav'].demucs.sources.index('other')] + stems[:, self.model.lm.condition_provider.conditioners['self_wav'].demucs.sources.index('bass')]
         vocals = stems[:, self.model.lm.condition_provider.conditioners['self_wav'].demucs.sources.index('vocals')]
+        background = convert_audio(background, self.model.lm.condition_provider.conditioners['self_wav'].demucs.samplerate, self.model.sample_rate, 1)
         vocals = convert_audio(vocals, self.model.lm.condition_provider.conditioners['self_wav'].demucs.samplerate, self.model.sample_rate, 1)
-        return vocals
+        return vocals, background
     
 # From https://gist.github.com/gatheluck/c57e2a40e3122028ceaecc3cb0d152ac
 def set_all_seeds(seed):

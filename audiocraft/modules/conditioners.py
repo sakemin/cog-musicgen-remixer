@@ -842,7 +842,8 @@ class ChromaChordConditioner(ChromaStemConditioner):
         if wav.shape[-1] == 1:
             # print("1515151")
             return self._extract_chroma(wav)
-        stems = self._get_stemmed_wav(wav, sample_rate)
+        # stems = wav # Not separating the tracks
+        stems = self._get_stemmed_wav(wav, sample_rate) 
         chroma = self._extract_chroma(stems)
         # print("2727272")
         return chroma

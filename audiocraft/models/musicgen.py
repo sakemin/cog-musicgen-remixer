@@ -252,6 +252,30 @@ class MusicGen:
         if return_tokens:
             return self.generate_audio(tokens), tokens
         return self.generate_audio(tokens)
+    
+    def generate_continuation_with_audio_token(self, prompt, 
+                              descriptions: tp.Optional[tp.List[tp.Optional[str]]] = None,
+                              progress: bool = False, return_tokens: bool = False) \
+            -> tp.Union[torch.Tensor, tp.Tuple[torch.Tensor, torch.Tensor]]:
+        """Generate samples conditioned on audio prompts.
+
+        Args:
+            prompt (torch.Tensor): A batch of waveforms used for continuation.
+                Prompt should be [B, C, T], or [C, T] if only one sample is generated.
+            prompt_sample_rate (int): Sampling rate of the given audio waveforms.
+            descriptions (list of str, optional): A list of strings used as text conditioning. Defaults to None.
+            progress (bool, optional): Flag to display progress of the generation process. Defaults to False.
+        """
+        
+        if descriptions is None:
+            descriptions = [None] * len(prompt)
+        attributes, prompt_tokens = self._prepare_tokens_and_attributes(descriptions, None)
+        assert prompt_tokens is None
+        prompt_tokens = prompt
+        tokens = self._generate_tokens(attributes, prompt_tokens, progress)
+        if return_tokens:
+            return self.generate_audio(tokens), tokens
+        return self.generate_audio(tokens)
 
     def generate_continuation_with_audio_chroma(self, prompt: torch.Tensor, prompt_sample_rate: int, melody_wavs: MelodyType,
                              melody_sample_rate: int, descriptions: tp.Optional[tp.List[tp.Optional[str]]] = None,
@@ -298,7 +322,7 @@ class MusicGen:
             return self.generate_audio(tokens), tokens
         return self.generate_audio(tokens)
 
-    def generate_continuation_with_audio_tokens(self, prompt, melody_wavs: MelodyType,
+    def generate_continuation_with_audio_tokens_and_audio_chroma(self, prompt, melody_wavs: MelodyType,
                              melody_sample_rate: int, descriptions: tp.Optional[tp.List[tp.Optional[str]]] = None,
                               progress: bool = False, return_tokens: bool = False) \
             -> tp.Union[torch.Tensor, tp.Tuple[torch.Tensor, torch.Tensor]]:
@@ -365,6 +389,33 @@ class MusicGen:
         attributes, prompt_tokens = self._prepare_tokens_and_attributes(descriptions=descriptions, prompt=prompt,
                                                                         melody_wavs=chord_texts, bpm=bpm, meter=meter)
 
+        tokens = self._generate_tokens(attributes, prompt_tokens, progress)
+        if return_tokens:
+            return self.generate_audio(tokens), tokens
+        return self.generate_audio(tokens)
+
+    def generate_continuation_with_audio_tokens_and_text_chroma(self, prompt, descriptions: tp.List[str], chord_texts: tp.Union[tp.List[str],str],
+                             progress: bool = False, bpm: tp.Union[float,int,tp.List[float],tp.List[int]] = 120, meter: tp.Optional[tp.Union[int,tp.List[int]]] = 4,
+                             return_tokens: bool = False) -> tp.Union[torch.Tensor,
+                                                                      tp.Tuple[torch.Tensor, torch.Tensor]]:
+        """Generate samples conditioned on text and melody.
+
+        Args:
+            descriptions (list of str): A list of strings used as text conditioning.
+            melody_wavs: (torch.Tensor or list of Tensor): A batch of waveforms used as
+                melody conditioning. Should have shape [B, C, T] with B matching the description length,
+                C=1 or 2. It can be [C, T] if there is a single description. It can also be
+                a list of [C, T] tensors.
+            melody_sample_rate: (int): Sample rate of the melody waveforms.
+            progress (bool, optional): Flag to display progress of the generation process. Defaults to False.
+        """
+        
+        if isinstance(chord_texts, str):
+            chord_texts = [chord_texts]
+
+        attributes, prompt_tokens = self._prepare_tokens_and_attributes(descriptions=descriptions, prompt=None,
+                                                                        melody_wavs=chord_texts, bpm=bpm, meter=meter)
+        prompt_tokens = prompt
         tokens = self._generate_tokens(attributes, prompt_tokens, progress)
         if return_tokens:
             return self.generate_audio(tokens), tokens

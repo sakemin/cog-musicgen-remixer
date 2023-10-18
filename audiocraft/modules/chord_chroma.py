@@ -39,6 +39,10 @@ class ChordExtractor(nn.Module):
 
         self.chords = chords.Chords()
         self.device = device
+
+        self.denoise_window_size = 7
+        self.denoise_threshold = 0.5
+
         self.model = BTC_model(config=self.config.model).to(device)
         if os.path.isfile(self.model_file):
             checkpoint = torch.load(self.model_file)
@@ -122,7 +126,7 @@ class ChordExtractor(nn.Module):
                             break
 
             strlines = ''.join(lines)
-
+            # print(lines)
             chroma = []
 
             count = 0
@@ -149,6 +153,19 @@ class ChordExtractor(nn.Module):
                     chroma.append(multihot)
                     count += 1
             
-            chromas.append(torch.stack(chroma, dim=0))
-        
+            chroma = torch.stack(chroma, dim=0)
+
+            # Denoising chroma
+            kernel = torch.ones(self.denoise_window_size)/self.denoise_window_size
+
+            filtered_signals = []
+            for i in range(chroma.shape[-1]):
+                filtered_signals.append(torch.nn.functional.conv1d(chroma[...,i].unsqueeze(0),
+                                                        kernel.unsqueeze(0).unsqueeze(0).to(chroma.device), 
+                                                        padding=(self.denoise_window_size - 1) // 2))
+            filtered_signals = torch.stack(filtered_signals, dim=-1)
+            filtered_signals = filtered_signals > self.denoise_threshold
+
+            chromas.append(filtered_signals.squeeze(0))
+
         return torch.stack(chromas, dim=0).to(self.device)
