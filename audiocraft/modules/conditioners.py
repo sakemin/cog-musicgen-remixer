@@ -757,6 +757,7 @@ class ChromaChordConditioner(ChromaStemConditioner):
 
         self.chroma = ChordExtractor(device = device, sample_rate=sample_rate, n_chroma=n_chroma, max_duration = duration, chroma_len = self.chroma_len, winhop = self.winhop).to(device)
         self.chords = chords.Chords()
+        self.chroma_coefficient = 1
 
         #3 Layered MLP projection override
         '''
@@ -926,7 +927,7 @@ class ChromaChordConditioner(ChromaStemConditioner):
                                 chroma[i] = torch.Tensor(rolled)
                                 count += 1
                 chromas.append(chroma)
-            chroma = torch.stack(chromas)
+            chroma = torch.stack(chromas)*self.chroma_coefficient
 
         if self.match_len_on_eval:
             B, T, C = chroma.shape
