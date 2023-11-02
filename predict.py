@@ -130,7 +130,7 @@ class Predictor(BasePredictor):
             choices=["loudness", "clip", "peak", "rms"],
         ),
         beat_sync_threshold: float = Input(
-            description="When beat syncing, if the gap between generated downbeat timing and input audio downbeat timing is larger than `beat_sync_threshold`, consider the beats are not corresponding. (This will be fixed with the optimal value and be hidden, when releasing.)",
+            description="When beat syncing, if the gap between generated downbeat timing and input audio downbeat timing is larger than `beat_sync_threshold`, consider the beats are not corresponding.",
             default=0.75,
         ),
         chroma_coefficient: float = Input(
@@ -556,7 +556,7 @@ class Predictor(BasePredictor):
 
         wav_amp = torch.max(torch.abs(wav))
         vocal_amp = torch.max(torch.abs(vocal))
-        wav = 0.5*(wav/wav_amp).cpu() + 0.5*(vocal/vocal_amp)[...,:wav_length].cpu()*0.6
+        wav = 0.5*(wav/wav_amp).cpu() + 0.5*(vocal/vocal_amp)[...,:wav_length].cpu()*0.5
         
         audio_write(
             "out",
