@@ -287,7 +287,7 @@ class Predictor(BasePredictor):
             input_downbeats.append(int(input_beat * wav_sr))
 
         downbeat_offset = input_downbeats[0]-wav_downbeats[0]
-        print(downbeat_offset)
+        # print(downbeat_offset)
         if downbeat_offset > 0:
             wav = torch.concat([torch.zeros([1,1,int(downbeat_offset)]).cpu(),wav.cpu()],dim=-1)
             for i in range(len(wav_downbeats)):
