@@ -126,7 +126,7 @@ class Predictor(BasePredictor):
         ),
         normalization_strategy: str = Input(
             description="Strategy for normalizing audio.",
-            default="peak",
+            default="loudness",
             choices=["loudness", "clip", "peak", "rms"],
         ),
         beat_sync_threshold: float = Input(
@@ -185,11 +185,11 @@ class Predictor(BasePredictor):
         if prompt is None:
             prompt = ''
         
-        tmp_path = 'tmp'
-        if os.path.isdir(tmp_path):
-            import shutil
-            shutil.rmtree(tmp_path)
-        os.mkdir(tmp_path)
+        # tmp_path = 'tmp'
+        # if os.path.isdir(tmp_path):
+        #     import shutil
+        #     shutil.rmtree(tmp_path)
+        # os.mkdir(tmp_path)
 
         if os.path.isdir('demix'):
             import shutil
@@ -249,6 +249,17 @@ class Predictor(BasePredictor):
             wav, tokens = model.generate_with_chroma([prompt], music_input, sr, progress=True, return_tokens=True)
             if multi_band_diffusion:
                 wav = self.mbd.tokens_to_wav(tokens)
+
+        mask_nan = torch.isnan(wav)
+        mask_inf = torch.isinf(wav)
+
+        wav[mask_nan] = 0  
+        wav[mask_inf] = 1
+
+        wav_amp = wav.abs().max()
+        wav = (wav/wav_amp).cpu()
+        # print(wav.abs().max())
+
         audio_write(
                 "background",
                 wav[0].cpu(),
@@ -285,6 +296,16 @@ class Predictor(BasePredictor):
 
         wav = torch.Tensor(tsm.wsola(wav[0].cpu().detach().numpy(), np.array([wav_downbeats, input_downbeats])))[...,:wav_length].unsqueeze(0).to(torch.float32)
 
+        mask_nan = torch.isnan(wav)
+        mask_inf = torch.isinf(wav)
+
+        wav[mask_nan] = 0  
+        wav[mask_inf] = 1
+
+        wav_amp = wav.abs().max()
+        if wav_amp != 0:
+            wav = (wav/wav_amp).cpu()
+        # print(wav.abs().max())
         audio_write(
             "background_synced",
             wav[0].cpu(),
@@ -554,10 +575,21 @@ class Predictor(BasePredictor):
                 )
         '''
 
-        wav_amp = torch.max(torch.abs(wav))
-        vocal_amp = torch.max(torch.abs(vocal))
+        wav_amp = wav.abs().max()
+        vocal_amp = vocal.abs().max()
         wav = 0.5*(wav/wav_amp).cpu() + 0.5*(vocal/vocal_amp)[...,:wav_length].cpu()*0.5
         
+        mask_nan = torch.isnan(wav)
+        mask_inf = torch.isinf(wav)
+
+        wav[mask_nan] = 0  
+        wav[mask_inf] = 1
+
+        wav_amp = wav.abs().max()
+        if wav_amp != 0:
+            wav = (wav/wav_amp).cpu()
+        # print(wav.abs().max())
+
         audio_write(
             "out",
             wav[0].cpu(),
