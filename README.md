@@ -35,7 +35,7 @@ git clone https://github.com/sakemin/cog-musicgen-chord
 To run the model, you need a local copy of the model's Docker image. You can satisfy this requirement by specifying the image ID in your call to `predict` like:
 
 ```
-cog predict r8.im/sakemin/musicgen-remixer@sha256:d7e98a2e92eaa33c4e1d43588fb4b37a9766b3ba2df634295218d165618dc733 -i prompt="bossa nova" -i music_input=@/your/path/to/input/music.wav
+cog predict r8.im/sakemin/musicgen-remixer@sha256:a31601435459035e7c3b0b8e56db374ebf5ae483f2e9c7c25e41c6ac3761fe52 -i prompt="bossa nova" -i music_input=@/your/path/to/input/music.wav
 ```
 
 For more information, see the Cog section [here](https://replicate.com/sakemin/musicgen-remixer/api#run)
@@ -112,7 +112,7 @@ cog push r8.im/username/modelname
 - Downbeat tracking and BPM retrieval is perfromed using [All-In-One Music Structure Analyzer](https://github.com/mir-aidj/all-in-one#all-in-one-music-structure-analyzer) by [Taejun Kim](https://github.com/mir-aidj).
 - Beat-syncing is performed with [PyTSMod](https://github.com/KAIST-MACLab/PyTSMod) by [MAC Lab @KAIST](https://github.com/KAIST-MACLab)
 ## Licenses
-- All code in this repository is licensed under the [Apache License 2.0 license](https://github.com/sakemin/cog-musicgen-remixer/blob/main/LICENSE).
-- The weights in [this repository](https://github.com/sakemin/cog-musicgen-remixer) repository are released under the CC-BY-NC 4.0 license as found in the [LICENSE_weights file](https://github.com/sakemin/cog-musicgen-remixer/blob/main/LICENSE_weights).
+- All code in this repository is licensed under the [Apache License 2.0 license](https://github.com/sakemin/cog-musicgen-remixer/blob/master/LICENSE).
+- The weights in [this repository](https://github.com/sakemin/cog-musicgen-remixer) repository are released under the CC-BY-NC 4.0 license as found in the [LICENSE_weights file](https://github.com/sakemin/cog-musicgen-remixer/blob/master/LICENSE_weights).
 - The code in the [Audiocraft](https://github.com/facebookresearch/audiocraft) repository is released under the MIT license (see [LICENSE file](https://github.com/facebookresearch/audiocraft/blob/main/LICENSE)).
 - The weights in the [Audiocraft](https://github.com/facebookresearch/audiocraft) repository are released under the CC-BY-NC 4.0 license (see [LICENSE_weights file](https://github.com/facebookresearch/audiocraft/blob/main/LICENSE_weights)).
