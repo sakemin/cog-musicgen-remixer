@@ -287,8 +287,9 @@ class Predictor(BasePredictor):
             input_downbeats.append(int(input_beat * wav_sr))
 
         downbeat_offset = input_downbeats[0]-wav_downbeats[0]
+        print(downbeat_offset)
         if downbeat_offset > 0:
-            wav = torch.concat([torch.zeros([1,1,int(downbeat_offset*wav_sr)]).cpu(),wav.cpu()],dim=-1)
+            wav = torch.concat([torch.zeros([1,1,int(downbeat_offset)]).cpu(),wav.cpu()],dim=-1)
             for i in range(len(wav_downbeats)):
                 wav_downbeats[i]=wav_downbeats[i]+downbeat_offset
         wav_downbeats = [0] + wav_downbeats + [wav_length]
@@ -298,14 +299,12 @@ class Predictor(BasePredictor):
 
         mask_nan = torch.isnan(wav)
         mask_inf = torch.isinf(wav)
-
-        wav[mask_nan] = 0  
+        wav[mask_nan] = 0
         wav[mask_inf] = 1
 
         wav_amp = wav.abs().max()
         if wav_amp != 0:
             wav = (wav/wav_amp).cpu()
-        # print(wav.abs().max())
         audio_write(
             "background_synced",
             wav[0].cpu(),
@@ -361,7 +360,7 @@ class Predictor(BasePredictor):
 
                 downbeat_offset = input_downbeats[0]-wav_downbeats[0]
                 if downbeat_offset > 0:
-                    wav = torch.concat([torch.zeros([1,1,int(downbeat_offset*wav_sr)]),wav[...,:int(downbeat_offset*wav_sr)]],dim=-1)
+                    wav = torch.concat([torch.zeros([1,1,int(downbeat_offset)]),wav[...,:int(downbeat_offset*wav_sr)]],dim=-1)
                     for i in range(len(wav_downbeats)):
                         wav_downbeats[i]=wav_downbeats[i]+downbeat_offset
                 wav_downbeats = [0] + wav_downbeats + [30*wav_sr]
@@ -574,6 +573,7 @@ class Predictor(BasePredictor):
                     loudness_compressor=True,
                 )
         '''
+        wav = wav.to(torch.float32)
 
         wav_amp = wav.abs().max()
         vocal_amp = vocal.abs().max()
