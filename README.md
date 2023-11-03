@@ -35,7 +35,7 @@ git clone https://github.com/sakemin/cog-musicgen-chord
 To run the model, you need a local copy of the model's Docker image. You can satisfy this requirement by specifying the image ID in your call to `predict` like:
 
 ```
-cog predict r8.im/sakemin/musicgen-remixer@sha256:d7e98a2e92eaa33c4e1d43588fb4b37a9766b3ba2df634295218d165618dc733 -i prompt="bossa nova" -i music_input=@/your/path/to/input/music.wav
+cog predict r8.im/sakemin/musicgen-remixer@sha256:a31601435459035e7c3b0b8e56db374ebf5ae483f2e9c7c25e41c6ac3761fe52 -i prompt="bossa nova" -i music_input=@/your/path/to/input/music.wav
 ```
 
 For more information, see the Cog section [here](https://replicate.com/sakemin/musicgen-remixer/api#run)
