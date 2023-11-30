@@ -87,6 +87,7 @@ cog push r8.im/username/modelname
 ---
 # Prediction
 ## Prediction Parameters
+- `model_version`: Model type. Computations take longer when using `large` or `stereo` models.
 - `prompt`: A description of the music you want to generate.
 - `music_input`: An audio file input for the remix.
 - `multi_band_diffusion`: If `True`, the EnCodec tokens will be decoded with MultiBand Diffusion.
