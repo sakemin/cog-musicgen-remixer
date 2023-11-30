@@ -490,6 +490,8 @@ class WaveformConditioner(BaseConditioner):
     def __init__(self, dim: int, output_dim: int, device: tp.Union[torch.device, str]):
         super().__init__(dim, output_dim)
         self.device = device
+        # if False no masking is done, used in ChromaStemConditioner when completing by periodicity a sample.
+        self._use_masking = True
 
     def tokenize(self, x: WavCondition) -> WavCondition:
         wav, length, sample_rate, path, seek_time = x
@@ -517,13 +519,12 @@ class WaveformConditioner(BaseConditioner):
         embeds = embeds.to(self.output_proj.weight)
         embeds = self.output_proj(embeds)
 
-        if lengths is not None:
+        if lengths is not None and self._use_masking:
             lengths = lengths / self._downsampling_factor()
             mask = length_to_mask(lengths, max_len=embeds.shape[1]).int()  # type: ignore
         else:
-            mask = torch.ones_like(embeds)
-        embeds = (embeds * mask.unsqueeze(2).to(self.device))
-
+            mask = torch.ones_like(embeds[..., 0])
+        embeds = (embeds * mask.unsqueeze(-1))
         return embeds, mask
 
 
@@ -558,6 +559,8 @@ class ChromaStemConditioner(WaveformConditioner):
         self.autocast = TorchAutocast(enabled=device != 'cpu', device_type=self.device, dtype=torch.float32)
         self.sample_rate = sample_rate
         self.match_len_on_eval = match_len_on_eval
+        if match_len_on_eval:
+            self._use_masking = False
         self.duration = duration
         self.__dict__['demucs'] = pretrained.get_model('htdemucs').to(device)
         stem_sources: list = self.demucs.sources  # type: ignore
@@ -692,7 +695,7 @@ class ChromaStemConditioner(WaveformConditioner):
         else:
             assert all(sr == x.sample_rate[0] for sr in x.sample_rate), "All sample rates in batch should be equal."
             chroma = self._compute_wav_embedding(x.wav, x.sample_rate[0])
-    
+
         if self.match_len_on_eval:
             B, T, C = chroma.shape
             if T > self.chroma_len:
@@ -751,14 +754,15 @@ class ChromaChordConditioner(ChromaStemConditioner):
 
         self.__dict__['demucs'] = pretrained.get_model('htdemucs').to(device)
         stem_sources: list = self.demucs.sources 
-        self.stem_indices = torch.LongTensor([stem_sources.index('bass'), stem_sources.index('other')]).to(device)        
+        self.stem_indices = torch.LongTensor([stem_sources.index('vocals'), stem_sources.index('bass'), stem_sources.index('other')]).to(device)        
         self.chroma_len = self._get_chroma_len()
         self.bar2chromabin = self.sample_rate / self.winhop
 
         self.chroma = ChordExtractor(device = device, sample_rate=sample_rate, n_chroma=n_chroma, max_duration = duration, chroma_len = self.chroma_len, winhop = self.winhop).to(device)
         self.chords = chords.Chords()
         self.chroma_coefficient = 1
-
+        
+        self.continuation_count = 0 # for infinite generation with text chroma
         #3 Layered MLP projection override
         '''
         self.output_proj = nn.Sequential(
@@ -843,8 +847,7 @@ class ChromaChordConditioner(ChromaStemConditioner):
         if wav.shape[-1] == 1:
             # print("1515151")
             return self._extract_chroma(wav)
-        # stems = wav # Not separating the tracks
-        stems = self._get_stemmed_wav(wav, sample_rate) 
+        stems = self._get_stemmed_wav(wav, sample_rate)
         chroma = self._extract_chroma(stems)
         # print("2727272")
         return chroma
@@ -872,6 +875,9 @@ class ChromaChordConditioner(ChromaStemConditioner):
         out = full_chroma[index: index + target_length]
         out = F.pad(out[None], (0, 0, 0, target_length - out.shape[0]))[0]
         return out.to(self.device)
+
+    def set_continuation_count(self, sub_duration_ratio, current_iter):
+        self.continuation_count = int(self.chroma_len * sub_duration_ratio * current_iter)
 
     @torch.no_grad()
     def _get_wav_embedding(self, x: tp.Union[WavCondition, WavChordTextCondition]) -> torch.Tensor:
@@ -922,6 +928,9 @@ class ChromaChordConditioner(ChromaStemConditioner):
                             mhot = self.chords.chord(token)
                             rolled = np.roll(mhot[2], mhot[0])
                             for i in range(count, count + add_step):
+                                if self.continuation_count > 0:
+                                    self.continuation_count -= 1
+                                    continue
                                 if count >= self.chroma_len: 
                                     break
                                 chroma[i] = torch.Tensor(rolled)
@@ -1081,6 +1090,8 @@ class CLAPEmbeddingConditioner(JointEmbeddingConditioner):
             import laion_clap  # type: ignore
         except ImportError:
             raise ImportError("Please install CLAP to use the CLAPEmbeddingConditioner: 'pip install laion_clap'")
+        warnings.warn("Sample rate for CLAP conditioner was fixed in version v1.1.0, (from 44.1 to 48 kHz). "
+                      "Please retrain all models.")
         checkpoint = AudioCraftEnvironment.resolve_reference_path(checkpoint)
         clap_tokenize = RobertaTokenizer.from_pretrained('roberta-base')
         clap_model = laion_clap.CLAP_Module(enable_fusion=enable_fusion, amodel=model_arch)

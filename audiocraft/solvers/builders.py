@@ -45,13 +45,11 @@ def get_solver(cfg: omegaconf.DictConfig) -> StandardSolver:
     from .compression import CompressionSolver
     from .musicgen import MusicGenSolver
     from .musicgen_chord import MusicGenChordSolver
-    from .musicgen_melody_test import MusicGenMelodyTestSolver
     from .diffusion import DiffusionSolver
     klass = {
         'compression': CompressionSolver,
         'musicgen': MusicGenSolver,
         'musicgen_chord': MusicGenChordSolver,
-        'musicgen_melody_test': MusicGenMelodyTestSolver,
         'audiogen': AudioGenSolver,
         'lm': MusicGenSolver,  # backward compatibility
         'diffusion': DiffusionSolver,

@@ -57,7 +57,7 @@ class EmbeddingCache:
             specify the index corresponding to the current embedding in the object that can represent batch metadata.
             If not specified, will return the full embedding unmodified.
     """
-    def __init__(self, cache_path: tp.Union[Path], device: tp.Union[str, torch.device],
+    def __init__(self, cache_path: tp.Union[str, Path], device: tp.Union[str, torch.device],
                  compute_embed_fn: tp.Callable[[Path, tp.Any, int], torch.Tensor],
                  extract_embed_fn: tp.Optional[tp.Callable[[torch.Tensor, tp.Any, int], torch.Tensor]] = None):
         self.cache_path = Path(cache_path)
@@ -107,7 +107,6 @@ class EmbeddingCache:
             cache = self._get_cache_path(path)
             if cache in self._current_batch_cache:
                 embed = self._current_batch_cache[cache]
-                logger.info('Cache loaded')
             else:
                 full_embed = self._compute_embed_fn(path, x, idx)
                 try:

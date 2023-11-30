@@ -359,8 +359,8 @@ class StandardSolver(ABC, flashy.BaseSolver):
         # checkpoints are not from the current xp, we only retrieve the best state
         if checkpoint_source is not None and checkpoint_source != checkpoint.CheckpointSource.CURRENT_XP:
             assert state is not None
-            self.logger.info("Checkpoint source is not the current xp: Load state_dict from best state.")
-            load_best = True
+            # self.logger.info("Checkpoint source is not the current xp: Load state_dict from best state.")
+            load_best = False
             state = {key: state[key] for key in self._continue_best_source_keys if key in state}
             # loaded checkpoints are FSDP checkpoints: we're reading the best state
             # from FSDP and we drop the regular best_state

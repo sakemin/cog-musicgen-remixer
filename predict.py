@@ -50,8 +50,11 @@ def _delete_param(cfg, full_name: str):
         del cfg[parts[-1]]
     OmegaConf.set_struct(cfg, True)
 
-def load_ckpt(path, device):
-    loaded = torch.load(str(path))
+def load_ckpt(path, device, url=False):
+    if url:
+        loaded = torch.hub.load_state_dict_from_url(str(path))
+    else:
+        loaded = torch.load(str(path))
     cfg = OmegaConf.create(loaded['xp.cfg'])
     cfg.device = str(device)
     if cfg.device == 'cpu':
@@ -67,7 +70,7 @@ def load_ckpt(path, device):
     lm.load_state_dict(loaded['model']) 
     lm.eval()
     lm.cfg = cfg
-    compression_model = CompressionSolver.wrapped_model_from_checkpoint(cfg, cfg.compression_model_checkpoint, device=device)
+    compression_model = CompressionSolver.model_from_checkpoint(cfg.compression_model_checkpoint, device=device)
     return MusicGen(f"{os.getenv('COG_USERNAME')}/musicgen-chord", compression_model, lm)
 
 class Predictor(BasePredictor):
@@ -75,22 +78,7 @@ class Predictor(BasePredictor):
         """Load the model into memory to make running multiple predictions efficient"""
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        self.model = load_ckpt('musicgen_chord.th', self.device)
-        self.model.lm.condition_provider.conditioners['self_wav'].match_len_on_eval = True
         self.mbd = MultiBandDiffusion.get_mbd_musicgen()
-
-        # Switching Chord Prediction model to 25 vocab (smaller)
-        from audiocraft.modules.btc.btc_model import BTC_model
-        from audiocraft.modules.btc.utils.mir_eval_modules import idx2chord
-        self.model.lm.condition_provider.conditioners['self_wav'].chroma.config.feature['large_voca']=False
-        self.model.lm.condition_provider.conditioners['self_wav'].chroma.config.model['num_chords']=25
-        self.model.lm.condition_provider.conditioners['self_wav'].chroma.model_file='audiocraft/modules/btc/test/btc_model.pt'
-        self.model.lm.condition_provider.conditioners['self_wav'].chroma.idx_to_chord = idx2chord
-        loaded = torch.load('audiocraft/modules/btc/test/btc_model.pt')
-        self.model.lm.condition_provider.conditioners['self_wav'].chroma.mean = loaded['mean']
-        self.model.lm.condition_provider.conditioners['self_wav'].chroma.std = loaded['std']
-        self.model.lm.condition_provider.conditioners['self_wav'].chroma.model = BTC_model(config=self.model.lm.condition_provider.conditioners['self_wav'].chroma.config.model).to(self.device)
-        self.model.lm.condition_provider.conditioners['self_wav'].chroma.model.load_state_dict(loaded['model'])
 
     def _load_model(
         self,
@@ -113,6 +101,10 @@ class Predictor(BasePredictor):
 
     def predict(
         self,
+        model_version: str = Input(
+            description="Model type. Computations take longer when using `large` or `stereo` models.", default="stereo-chord",
+            choices=["stereo-chord", "stereo-chord-large", "chord", "chord-large"]
+        ),
         prompt: str = Input(
             description="A description of the music you want to generate.", default=None
         ),
@@ -121,7 +113,7 @@ class Predictor(BasePredictor):
             default=None,
         ),
         multi_band_diffusion: bool = Input(
-            description="If `True`, the EnCodec tokens will be decoded with MultiBand Diffusion.",
+            description="If `True`, the EnCodec tokens will be decoded with MultiBand Diffusion. Not compatible with `stereo` models.",
             default=False,
         ),
         normalization_strategy: str = Input(
@@ -129,9 +121,13 @@ class Predictor(BasePredictor):
             default="loudness",
             choices=["loudness", "clip", "peak", "rms"],
         ),
+        # bpm_hard_sync: bool = Input(
+        #     description="If `True`, respective downbeats aren't analyzed, but are calculated from the bpm value detected and the first downbeat recognized instead. If the input audio has a changing bpm value, must be set `False`.",
+        #     default=True,
+        # ),
         beat_sync_threshold: float = Input(
-            description="When beat syncing, if the gap between generated downbeat timing and input audio downbeat timing is larger than `beat_sync_threshold`, consider the beats are not corresponding.",
-            default=0.75,
+            description="When beat syncing, if the gap between generated downbeat timing and input audio downbeat timing is larger than `beat_sync_threshold`, consider the beats are not corresponding. If `None` or `-1`, `1.1/(bpm/60)` will be used as the value. 0.75 is a good value to set.",
+            default=None,
         ),
         chroma_coefficient: float = Input(
             description="Coefficient value multiplied to multi-hot chord chroma.",
@@ -198,9 +194,40 @@ class Predictor(BasePredictor):
             import shutil
             shutil.rmtree('spec')
 
+        # Loading models
+        if os.path.isfile(f'musicgen-{model_version}.th'):
+                pass
+        else:
+            url = f"https://weights.replicate.delivery/default/musicgen-chord/musicgen-{model_version}.th"
+            dest = f"/src/musicgen-{model_version}.th"
+            subprocess.check_call(["pget", url, dest], close_fds=False)
+        self.model = load_ckpt(f'/src/musicgen-{model_version}.th', self.device)
+        self.model.lm.condition_provider.conditioners['self_wav'].match_len_on_eval = True
+
+        if 'stereo' in model_version:
+            channel = 2
+        else:
+            channel = 1
+
+        # Switching Chord Prediction model to 25 vocab (smaller)
+        from audiocraft.modules.btc.btc_model import BTC_model
+        from audiocraft.modules.btc.utils.mir_eval_modules import idx2chord
+        self.model.lm.condition_provider.conditioners['self_wav'].chroma.config.feature['large_voca']=False
+        self.model.lm.condition_provider.conditioners['self_wav'].chroma.config.model['num_chords']=25
+        self.model.lm.condition_provider.conditioners['self_wav'].chroma.model_file='audiocraft/modules/btc/test/btc_model.pt'
+        self.model.lm.condition_provider.conditioners['self_wav'].chroma.idx_to_chord = idx2chord
+        loaded = torch.load('audiocraft/modules/btc/test/btc_model.pt')
+        self.model.lm.condition_provider.conditioners['self_wav'].chroma.mean = loaded['mean']
+        self.model.lm.condition_provider.conditioners['self_wav'].chroma.std = loaded['std']
+        self.model.lm.condition_provider.conditioners['self_wav'].chroma.model = BTC_model(config=self.model.lm.condition_provider.conditioners['self_wav'].chroma.config.model).to(self.device)
+        self.model.lm.condition_provider.conditioners['self_wav'].chroma.model.load_state_dict(loaded['model'])
+        
         model = self.model
         model.lm.eval()
 
+        if multi_band_diffusion and int(self.model.lm.cfg.transformer_lm.n_q) == 8:
+            raise ValueError("Multi-band Diffusion only works with non-stereo models.")
+        
         # in_step_beat_sync = in_step_beat_sync
 
         set_generation_params = lambda duration: model.set_generation_params(
@@ -225,6 +252,9 @@ class Predictor(BasePredictor):
 
         print("BPM : ", music_input_analysis.bpm)
         
+        if not beat_sync_threshold or beat_sync_threshold == -1:
+            beat_sync_threshold = 1.1/(int(music_input_analysis.bpm)/60)
+
         prompt = prompt + f', bpm : {int(music_input_analysis.bpm)}'
         
         music_input = music_input[None] if music_input.dim() == 2 else music_input
@@ -272,8 +302,19 @@ class Predictor(BasePredictor):
 
         wav_downbeats = []
         input_downbeats = []
+        bpm_hard_sync=False
+        if bpm_hard_sync:
+            music_input_bpm_based_downbeats = [music_input_analysis.downbeats[0]]
+            downbeat_step = 60.9/music_input_analysis.bpm
+            while True:
+                if music_input_bpm_based_downbeats[-1]+downbeat_step >= wav_length/wav_sr:
+                    break
+                music_input_bpm_based_downbeats.append(music_input_bpm_based_downbeats[-1]+downbeat_step)
+            music_input_downbeats = music_input_bpm_based_downbeats
+        else:
+            music_input_downbeats = music_input_analysis.downbeats
         for wav_beat in wav_analysis.downbeats:
-            input_beat = min(music_input_analysis.downbeats, key=lambda x: abs(wav_beat - x), default=None)
+            input_beat = min(music_input_downbeats, key=lambda x: abs(wav_beat - x), default=None)
             if input_beat is None:
                 continue
             print(wav_beat, input_beat)
@@ -289,7 +330,7 @@ class Predictor(BasePredictor):
         downbeat_offset = input_downbeats[0]-wav_downbeats[0]
         # print(downbeat_offset)
         if downbeat_offset > 0:
-            wav = torch.concat([torch.zeros([1,1,int(downbeat_offset)]).cpu(),wav.cpu()],dim=-1)
+            wav = torch.concat([torch.zeros([1,channel,int(downbeat_offset)]).cpu(),wav.cpu()],dim=-1)
             for i in range(len(wav_downbeats)):
                 wav_downbeats[i]=wav_downbeats[i]+downbeat_offset
         wav_downbeats = [0] + wav_downbeats + [wav_length]

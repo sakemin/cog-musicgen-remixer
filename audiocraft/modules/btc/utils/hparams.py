@@ -25,6 +25,9 @@ class HParams(object):
 
     @classmethod
     def load(cls, path):
+        import os
+        print(os.environ['HOME'])
+        print(os.getcwd())
         with open(path, 'r') as f:
             return cls(**yaml.load(f, yaml.Loader))
 

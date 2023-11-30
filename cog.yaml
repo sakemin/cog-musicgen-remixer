@@ -9,7 +9,7 @@ build:
   # a list of ubuntu apt packages to install
   system_packages:
     - "ffmpeg"
-    # - "portaudio19-dev"
+    - "portaudio19-dev"
     # - "libgl1-mesa-glx"
     # - "libglib2.0-0"
 
@@ -32,7 +32,7 @@ build:
     - "huggingface_hub"
     - "tqdm"
     - "transformers>=4.31.0"
-    - "xformers"
+    - "xformers==0.0.22"
     - "demucs"
     - "librosa"
     - "gradio"
@@ -48,7 +48,8 @@ build:
       
   # commands run after the environment is setup
   run:
-    - "pip3 install natten -f https://shi-labs.com/natten/wheels/cu117/torch2.0.0/index.html"
+    - pip3 install natten -f https://shi-labs.com/natten/wheels/cu117/torch2.0.0/index.html
+    - curl -o /usr/local/bin/pget -L "https://github.com/replicate/pget/releases/download/v0.0.6/pget" && chmod +x /usr/local/bin/pget
     # - "apt-get update && apt-get install -y ffmpeg"
     # - "apt-get install unzip"
     # - "python -m pip install pip --upgrade"

@@ -21,12 +21,12 @@ class ChordExtractor(nn.Module):
 
     def __init__(self, device, sample_rate, max_duration, chroma_len, n_chroma, winhop):
         super().__init__()
-        self.config = HParams.load("audiocraft/modules/btc/run_config.yaml") #gotta specify the path for run_config.yaml of btc
+        self.config = HParams.load("/src/audiocraft/modules/btc/run_config.yaml") #gotta specify the path for run_config.yaml of btc
 
         # self.config.feature['large_voca'] = False
         # self.config.model['num_chords'] = 25
 
-        self.model_file = 'audiocraft/modules/btc/test/btc_model_large_voca.pt'
+        self.model_file = '/src/audiocraft/modules/btc/test/btc_model_large_voca.pt'
         # self.model_file = 'audiocraft/modules/btc/test/btc_model.pt'
         self.idx_to_chord = idx2voca_chord()
         self.sr = sample_rate
@@ -42,7 +42,7 @@ class ChordExtractor(nn.Module):
 
         self.denoise_window_size = 7
         self.denoise_threshold = 0.5
-
+        
         self.model = BTC_model(config=self.config.model).to(device)
         if os.path.isfile(self.model_file):
             checkpoint = torch.load(self.model_file)
@@ -126,7 +126,7 @@ class ChordExtractor(nn.Module):
                             break
 
             strlines = ''.join(lines)
-            # print(lines)
+
             chroma = []
 
             count = 0
@@ -167,5 +167,5 @@ class ChordExtractor(nn.Module):
             filtered_signals = filtered_signals > self.denoise_threshold
 
             chromas.append(filtered_signals.squeeze(0))
-
+        
         return torch.stack(chromas, dim=0).to(self.device)

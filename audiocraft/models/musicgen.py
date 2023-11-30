@@ -12,11 +12,12 @@ and provide easy access to the generation API.
 import typing as tp
 import warnings
 
+import omegaconf
 import torch
 
 from .encodec import CompressionModel
 from .lm import LMModel
-from .builders import get_debug_compression_model, get_debug_lm_model
+from .builders import get_debug_compression_model, get_debug_lm_model, get_wrapped_compression_model
 from .loaders import load_compression_model, load_lm_model
 from ..data.audio_utils import convert_audio
 from ..modules.conditioners import ConditioningAttributes, WavCondition, WavChordTextCondition
@@ -52,14 +53,28 @@ class MusicGen:
         self.name = name
         self.compression_model = compression_model
         self.lm = lm
+        self.cfg: tp.Optional[omegaconf.DictConfig] = None
+        # Just to be safe, let's put everything in eval mode.
+        self.compression_model.eval()
+        self.lm.eval()
+
+        if hasattr(lm, 'cfg'):
+            cfg = lm.cfg
+            assert isinstance(cfg, omegaconf.DictConfig)
+            self.cfg = cfg
+
+        if self.cfg is not None:
+            self.compression_model = get_wrapped_compression_model(self.compression_model, self.cfg)
+
         if max_duration is None:
-            if hasattr(lm, 'cfg'):
+            if self.cfg is not None:
                 max_duration = lm.cfg.dataset.segment_duration  # type: ignore
             else:
                 raise ValueError("You must provide max_duration when building directly MusicGen")
         assert max_duration is not None
         self.max_duration: float = max_duration
         self.device = next(iter(lm.parameters())).device
+
         self.generation_params: dict = {}
         self.set_generation_params(duration=15)  # 15 seconds by default
         self._progress_callback: tp.Optional[tp.Callable[[int, int], None]] = None
@@ -118,6 +133,7 @@ class MusicGen:
         compression_model = load_compression_model(name, device=device)
         if 'self_wav' in lm.condition_provider.conditioners:
             lm.condition_provider.conditioners['self_wav'].match_len_on_eval = True
+            lm.condition_provider.conditioners['self_wav']._use_masking = False
 
         return MusicGen(name, compression_model, lm)
 
@@ -576,41 +592,42 @@ class MusicGen:
                 prompt_length = prompt_tokens.shape[-1]
 
             stride_tokens = int(self.frame_rate * self.extend_stride)
+            step = 0
 
             while current_gen_offset + prompt_length < total_gen_len:
+                self.lm.condition_provider.conditioners['self_wav'].set_continuation_count(self.extend_stride/self.max_duration, step) #For text based chord conditioning
                 time_offset = current_gen_offset / self.frame_rate
                 chunk_duration = min(self.duration - time_offset, self.max_duration)
                 max_gen_len = int(chunk_duration * self.frame_rate)
                 for attr, ref_wav in zip(attributes, ref_wavs):
-                    wav_length = ref_wav.length.item()
-                    if wav_length == 0:
-                        continue
-                    # We will extend the wav periodically if it not long enough.
-                    # we have to do it here rather than in conditioners.py as otherwise
-                    # we wouldn't have the full wav.
-                    initial_position = int(time_offset * self.sample_rate)
-                    wav_target_length = int(self.max_duration * self.sample_rate)
-                    positions = torch.arange(initial_position,
-                                             initial_position + wav_target_length, device=self.device)
-                    attr.wav['self_wav'] = WavCondition(
-                        ref_wav[0][..., positions % wav_length],
-                        torch.full_like(ref_wav[1], wav_target_length),
-                        [self.sample_rate] * ref_wav[0].size(0),
-                        [None], [0.])
-                if prompt_tokens is None or prompt_tokens.shape[-1] < max_gen_len:
-                    with self.autocast:
-                        gen_tokens = self.lm.generate(
-                            prompt_tokens, attributes,
-                            callback=callback, max_gen_len=max_gen_len, **self.generation_params)
-                    if prompt_tokens is None:
-                        all_tokens.append(gen_tokens)
-                    else:
-                        all_tokens.append(gen_tokens[:, :, prompt_tokens.shape[-1]:])
-                    prompt_tokens = gen_tokens[:, :, stride_tokens:]
-                    prompt_length = prompt_tokens.shape[-1]
-                    current_gen_offset += stride_tokens
+                    if isinstance(ref_wav, WavCondition):
+                        wav_length = ref_wav.length.item()
+                        if wav_length == 0:
+                            continue
+                        # We will extend the wav periodically if it not long enough.
+                        # we have to do it here rather than in conditioners.py as otherwise
+                        # we wouldn't have the full wav.
+                        initial_position = int(time_offset * self.sample_rate)
+                        wav_target_length = int(self.max_duration * self.sample_rate)
+                        positions = torch.arange(initial_position,
+                                                initial_position + wav_target_length, device=self.device)
+                        attr.wav['self_wav'] = WavCondition(
+                            ref_wav[0][..., positions % wav_length],
+                            torch.full_like(ref_wav[1], wav_target_length),
+                            [self.sample_rate] * ref_wav[0].size(0),
+                            [None], [0.])
+                with self.autocast:
+                    gen_tokens = self.lm.generate(
+                        prompt_tokens, attributes,
+                        callback=callback, max_gen_len=max_gen_len, **self.generation_params)
+                if prompt_tokens is None:
+                    all_tokens.append(gen_tokens)
                 else:
-                    break
+                    all_tokens.append(gen_tokens[:, :, prompt_tokens.shape[-1]:])
+                prompt_tokens = gen_tokens[:, :, stride_tokens:]
+                prompt_length = prompt_tokens.shape[-1]
+                current_gen_offset += stride_tokens
+                step = step + 1
 
             gen_tokens = torch.cat(all_tokens, dim=-1)
         return gen_tokens

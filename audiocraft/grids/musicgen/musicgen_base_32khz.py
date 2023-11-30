@@ -14,7 +14,7 @@ def explorer(launcher):
     launcher.slurm_(gpus=8, partition=partitions)
     launcher.bind_(solver='musicgen/musicgen_base_32khz')
     # replace this by the desired music dataset
-    launcher.bind_(dset='internal/chuki')
+    launcher.bind_(dset='internal/music_400k_32khz')
 
     fsdp = {'autocast': False, 'fsdp.use': True}
     medium = {'model/lm/model_scale': 'medium'}
