@@ -90,7 +90,7 @@ cog push r8.im/username/modelname
 - `model_version`: Model type. Computations take longer when using `large` or `stereo` models.
 - `prompt`: A description of the music you want to generate.
 - `music_input`: An audio file input for the remix.
-- `multi_band_diffusion`: If `True`, the EnCodec tokens will be decoded with MultiBand Diffusion.
+- `multi_band_diffusion`: If `True`, the EnCodec tokens will be decoded with MultiBand Diffusion. Not compatible with `stereo` models.
 - `normalization_strategy`: Strategy for normalizing audio.
 - `beat_sync_threshold`: When beat syncing, if the gap between generated downbeat timing and input audio downbeat timing is larger than `beat_sync_threshold`, consider the beats are not corresponding.
 - `chroma_coefficient`: Coefficient value multiplied to multi-hot chord chroma.
