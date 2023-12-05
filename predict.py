@@ -253,9 +253,13 @@ class Predictor(BasePredictor):
         print("BPM : ", music_input_analysis.bpm)
         
         if not beat_sync_threshold or beat_sync_threshold == -1:
-            beat_sync_threshold = 1.1/(int(music_input_analysis.bpm)/60)
+            if music_input_analysis.bpm is not None:
+                beat_sync_threshold = 1.1/(int(music_input_analysis.bpm)/60)
+            else:
+                beat_sync_threshold = 0.75
 
-        prompt = prompt + f', bpm : {int(music_input_analysis.bpm)}'
+        if music_input_analysis.bpm is not None:
+            prompt = prompt + f', bpm : {int(music_input_analysis.bpm)}'
         
         music_input = music_input[None] if music_input.dim() == 2 else music_input
         duration = music_input.shape[-1]/sr
@@ -303,7 +307,7 @@ class Predictor(BasePredictor):
         wav_downbeats = []
         input_downbeats = []
         bpm_hard_sync=False
-        if bpm_hard_sync:
+        if bpm_hard_sync and music_input_analysis.bpm is not None:
             music_input_bpm_based_downbeats = [music_input_analysis.downbeats[0]]
             downbeat_step = 60.9/music_input_analysis.bpm
             while True:
