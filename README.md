@@ -108,9 +108,10 @@ cog push r8.im/username/modelname
 ---
 ## References
 - Chord recognition from audio file is performed using [BTC](https://github.com/jayg996/BTC-ISMIR19) model, by [Jonggwon Park](https://github.com/jayg996).
-	-  Paper : [A Bi-Directional Transformer for Musical Chord Recognition](https://arxiv.org/abs/1907.02698)
+	- Paper : [A Bi-Directional Transformer for Musical Chord Recognition](https://arxiv.org/abs/1907.02698)
 - Vocal dropping is implemented using Meta's [`demucs`](https://github.com/facebookresearch/demucs).
 - Downbeat tracking and BPM retrieval is perfromed using [All-In-One Music Structure Analyzer](https://github.com/mir-aidj/all-in-one#all-in-one-music-structure-analyzer) by [Taejun Kim](https://github.com/mir-aidj).
+	- Paper : [All-In-One Metrical And Functional Structure Analysis With Neighborhood Attentions on Demixed Audio](https://arxiv.org/abs/2307.16425)
 - Beat-syncing is performed with [PyTSMod](https://github.com/KAIST-MACLab/PyTSMod) by [MAC Lab @KAIST](https://github.com/KAIST-MACLab)
 ## Licenses
 - All code in this repository is licensed under the [Apache License 2.0 license](https://github.com/sakemin/cog-musicgen-remixer/blob/master/LICENSE).
