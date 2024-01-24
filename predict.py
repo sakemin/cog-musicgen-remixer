@@ -13,6 +13,8 @@ from typing import Optional
 from cog import BasePredictor, Input, Path
 
 # Model specific imports
+from typing import List
+
 import torchaudio
 import typing as tp
 import numpy as np
@@ -159,6 +161,10 @@ class Predictor(BasePredictor):
             default="wav",
             choices=["wav", "mp3"],
         ),
+        return_instrumental: bool = Input(
+            description="If `True`, the instrumental audio will also be returned.",
+            default=False,
+        ),
         seed: int = Input(
             description="Seed for random number generator. If `None` or `-1`, a random seed will be used.",
             default=None,
@@ -175,7 +181,7 @@ class Predictor(BasePredictor):
         #     description="Amplifying the output audio to prevent volume diminishing along generations. (This will be fixed with the optimal value and be hidden, when releasing.)",
         #     default=1.2,
         # ),
-    ) -> Path:
+    ) -> List[Path]:
 
         if prompt is None:
             raise ValueError("Must provide `prompt`.")
@@ -404,7 +410,23 @@ class Predictor(BasePredictor):
         else:
             path = wav_path
 
-        return Path(path)
+        output_dir = [Path(path)]
+
+        if return_instrumental:
+            inst_path = "background_synced.wav"
+
+            if output_format == "mp3":
+                mp3_inst_path = "background_synced.mp3"
+                if Path(mp3_path).exists():
+                    os.remove(mp3_path)
+                subprocess.call(["ffmpeg", "-i", inst_path, mp3_inst_path])
+                os.remove(inst_path)
+                inst_out_path = mp3_inst_path
+            else:
+                inst_out_path = inst_path
+            output_dir.append(Path(inst_out_path))
+
+        return output_dir
 
     def _preprocess_audio(
         audio_path, model: MusicGen, duration: tp.Optional[int] = None
